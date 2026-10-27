@@ -27,15 +27,22 @@
     <div id="msg" hidden></div>
     <main id="list"></main>
   </div>
-  <dialog id="login">
-    <form id="lf">
+  <div id="login" class="modal" hidden>
+    <form id="lf" class="sheet">
       <h2>Accesso amministratore</h2>
-      <input name="email" type="email" placeholder="Email" autocomplete="username" required>
+      <input name="email" type="email" placeholder="Email" autocomplete="username" autocapitalize="none" required>
       <input name="password" type="password" placeholder="Password" autocomplete="current-password" required>
       <p id="le" class="err"></p>
-      <div class="dl"><button type="button" id="lc" class="btn ghost">Annulla</button><button class="btn">Entra</button></div>
+      <div class="dl"><button type="button" id="lc" class="btn ghost">Annulla</button><button type="submit" class="btn">Entra</button></div>
     </form>
-  </dialog>
+  </div>
+  <div id="xm" class="modal" hidden>
+    <div class="sheet wide">
+      <h2>Export</h2>
+      <pre id="xt"></pre>
+      <div class="dl"><button type="button" id="xc" class="btn ghost">Chiudi</button><button type="button" id="xk" class="btn">COPIA</button></div>
+    </div>
+  </div>
   <script type="module" src="/src/main.js"></script>
 </body>
 </html>
