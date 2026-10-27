@@ -190,8 +190,8 @@ async function refreshAuth() {
   renderList(); status()
 }
 
-$('#auth').onclick = async () => { if (isAdmin) await sb.auth.signOut(); else $('#login').showModal() }
-$('#lc').onclick = () => $('#login').close()
+$('#auth').onclick = async () => { if (isAdmin) await sb.auth.signOut(); else openModal('login') }
+$('#lc').onclick = () => closeModal('login')
 $('#lf').addEventListener('submit', async e => {
   e.preventDefault()
   const f = e.target, err = $('#le')
@@ -200,10 +200,11 @@ $('#lf').addEventListener('submit', async e => {
   if (error) { err.textContent = 'Credenziali non valide'; return }
   await refreshAuth()
   if (!isAdmin) { await sb.auth.signOut(); err.textContent = 'Questo account non è amministratore'; return }
-  f.reset(); $('#login').close()
+  f.reset(); closeModal('login')
 })
 
-/* ---------- Export .txt ---------- */
+/* ---------- Export (finestra con testo + copia) ---------- */
+let exportText = ''
 function buildTxt(map, from, to) {
   const ls = lessonsInRange(from, to), L = []
   const st = (r, f) => !(r && (r.attendance_a || r.attendance_g)) ? 'non compilato' : r[f] ? 'presente' : 'assente'
@@ -261,16 +262,33 @@ $('#exp').onclick = async () => {
       const e = new Date(y, m, 0)
       if (e > to) to = e
     }
-    const txt = buildTxt(map, new Date(START.y, START.m, 1), to)
-    const a = document.createElement('a')
-    a.href = URL.createObjectURL(new Blob([txt], { type: 'text/plain;charset=utf-8' }))
-    a.download = `registro-lezioni-${fk(new Date())}.txt`
-    document.body.appendChild(a); a.click(); a.remove()
-    setTimeout(() => URL.revokeObjectURL(a.href), 2000)
+    exportText = buildTxt(map, new Date(START.y, START.m, 1), to)
+    $('#xt').textContent = exportText
+    $('#xk').textContent = 'COPIA'
+    openModal('xm')
   } catch (e) {
     lastErr = 'export non riuscito (' + (e.message || 'errore di rete') + ')'
     failed.add('export'); status(); failed.delete('export')
   } finally { btn.disabled = false }
+}
+
+/* ---------- Finestre modali ---------- */
+const openModal = id => { $('#' + id).hidden = false; if (id === 'login') setTimeout(() => $('#lf').email.focus(), 50) }
+const closeModal = id => { $('#' + id).hidden = true }
+document.querySelectorAll('.modal').forEach(el => el.addEventListener('click', e => { if (e.target === el) closeModal(el.id) }))
+document.addEventListener('keydown', e => { if (e.key === 'Escape') document.querySelectorAll('.modal').forEach(el => closeModal(el.id)) })
+$('#xc').onclick = () => closeModal('xm')
+$('#xk').onclick = async () => {
+  let ok = false
+  try { await navigator.clipboard.writeText(exportText); ok = true }
+  catch {
+    const ta = document.createElement('textarea')
+    ta.value = exportText; ta.style.cssText = 'position:fixed;top:0;opacity:0;font-size:16px'
+    document.body.appendChild(ta); ta.focus(); ta.select(); ta.setSelectionRange(0, exportText.length)
+    try { ok = document.execCommand('copy') } catch {}
+    ta.remove()
+  }
+  $('#xk').textContent = ok ? 'COPIATO ✓' : 'COPIA MANUALE'
 }
 
 /* ---------- Avvio ---------- */
