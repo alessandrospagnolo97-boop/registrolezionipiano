@@ -1,6 +1,43 @@
 import { createClient } from '@supabase/supabase-js'
 import './style.css'
 
+/* ====================================================================
+   CALENDARIO — QUI aggiungi o togli le date (unica parte da modificare)
+   --------------------------------------------------------------------
+   Regola di base (automatica): ogni martedì = Ostia Antica,
+   giovedì = Castel Gandolfo, venerdì = Frosinone.
+
+   Qui sotto scrivi solo le ECCEZIONI, mese per mese:
+     • Una riga col nome del mese e l'anno:    Dicembre 2026
+     • Poi una riga per ogni data:
+         + 23 Ostia Antica      → lezione in più (giorno + luogo)
+         + 28 Frosinone
+         - 25                   → lezione tolta (es. festivo)
+       Il "+" si può anche omettere:  23 Ostia Antica
+     • Il rimborso carburante è automatico: sì per Castel Gandolfo e
+       Frosinone, no per Ostia Antica. Per un altro luogo aggiungi
+       la parola "rimborso" a fine riga:  + 12 Roma rimborso
+     • Spostamento = una riga "-" per il giorno vecchio e una "+" per il nuovo.
+     • Le righe che iniziano con # sono commenti e vengono ignorate.
+     • Una riga scritta male viene ignorata (il sito non si rompe).
+   ==================================================================== */
+const CALENDARIO = `
+Novembre 2026
++ 3 Ostia Antica
++ 5 Castel Gandolfo
++ 6 Frosinone
++ 10 Ostia Antica
++ 12 Castel Gandolfo
++ 13 Frosinone
++ 17 Ostia Antica
++ 19 Castel Gandolfo
++ 20 Frosinone
++ 24 Ostia Antica
++ 26 Castel Gandolfo
++ 27 Frosinone
+`
+/* ==================== fine zona da modificare ==================== */
+
 /* ---------- Configurazione ---------- */
 const env = import.meta.env
 const SB_URL = env.VITE_SUPABASE_URL || env.NEXT_PUBLIC_SUPABASE_URL
@@ -13,6 +50,8 @@ const PEOPLE = ['Alessandro', 'Andrea', 'Gabriele', 'Gianmarco']
 const MONTHS = ['Gennaio','Febbraio','Marzo','Aprile','Maggio','Giugno','Luglio','Agosto','Settembre','Ottobre','Novembre','Dicembre']
 const SM = ['gen','feb','mar','apr','mag','giu','lug','ago','set','ott','nov','dic']
 const DOW = ['Dom','Lun','Mar','Mer','Gio','Ven','Sab']
+// luoghi noti: parola chiave -> [nome ufficiale, rimborso]
+const KNOWN = { ostia: ['Ostia Antica', false], castel: ['Castel Gandolfo', true], frosinone: ['Frosinone', true] }
 
 /* ---------- Utilità data (sempre in ora locale, nessun problema di fuso) ---------- */
 const $ = s => document.querySelector(s)
@@ -20,12 +59,68 @@ const p2 = n => String(n).padStart(2, '0')
 const fk = d => `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`
 const dmy = d => `${p2(d.getDate())}/${p2(d.getMonth() + 1)}/${d.getFullYear()}`
 const addDays = (d, n) => new Date(d.getFullYear(), d.getMonth(), d.getDate() + n)
+const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]))
+
+/* ---------- Lettura del calendario (eccezioni) ---------- */
+function parseCalendar(text) {
+  const extra = {}, skip = new Set()
+  let y = null, m = null
+  for (const raw of String(text).split('\n')) {
+    try {
+      const line = raw.trim()
+      if (!line || line.startsWith('#')) continue
+      // intestazione mese: "Dicembre 2026"
+      const h = line.match(/^([A-Za-zÀ-ÿ]+)\s+(\d{4})$/)
+      if (h) {
+        const i = MONTHS.findIndex(n => n.toLowerCase().slice(0, 3) === h[1].toLowerCase().slice(0, 3))
+        if (i >= 0) { m = i; y = +h[2] } else { m = y = null; console.warn('Calendario: mese non riconosciuto →', line) }
+        continue
+      }
+      // riga data: "+ 23 Luogo" | "- 25" | "23 Luogo" | "+ 2026-12-23 Luogo"
+      const r = line.match(/^([+-])?\s*(?:(\d{4})-(\d{1,2})-(\d{1,2})|(\d{1,2}))\b\s*(.*)$/)
+      if (!r) { console.warn('Calendario: riga ignorata →', line); continue }
+      const remove = r[1] === '-'
+      let yy, mm, dd
+      if (r[2]) { yy = +r[2]; mm = +r[3] - 1; dd = +r[4] }
+      else if (y !== null) { yy = y; mm = m; dd = +r[5] }
+      else { console.warn('Calendario: manca il mese sopra →', line); continue }
+      const dt = new Date(yy, mm, dd)
+      if (dt.getFullYear() !== yy || dt.getMonth() !== mm || dt.getDate() !== dd) { console.warn('Calendario: data non valida →', line); continue }
+      const key = fk(dt)
+      if (remove) { skip.add(key); delete extra[key]; continue }
+      let rest = r[6].trim()
+      const wantRef = /\brimborso\b/i.test(rest) && !/\bsenza\s+rimborso\b/i.test(rest)
+      const noRef = /\bsenza\s+rimborso\b/i.test(rest)
+      rest = rest.replace(/\b(senza\s+)?rimborso\b/ig, '').replace(/\s+/g, ' ').trim()
+      let place = rest, refund = false
+      if (!rest) {
+        place = PLACES[dt.getDay()]
+        if (!place) { console.warn('Calendario: manca il luogo →', line); continue }
+        refund = REFUND.includes(dt.getDay())
+      } else {
+        const low = rest.toLowerCase()
+        const k = Object.keys(KNOWN).find(w => low.includes(w))
+        if (k) { place = KNOWN[k][0]; refund = KNOWN[k][1] }
+      }
+      if (wantRef) refund = true
+      if (noRef) refund = false
+      skip.delete(key)
+      extra[key] = { place, refund }
+    } catch (e) { console.warn('Calendario: riga ignorata →', raw, e) }
+  }
+  return { extra, skip }
+}
+let CAL
+try { CAL = parseCalendar(CALENDARIO) } catch (e) { console.warn('Calendario non leggibile', e); CAL = { extra: {}, skip: new Set() } }
 
 function lessonsInRange(from, to) {
   const out = []
   for (let t = new Date(from); t <= to; t = addDays(t, 1)) {
-    const dow = t.getDay()
-    if (PLACES[dow]) out.push({ date: new Date(t), key: fk(t), dow, place: PLACES[dow], refund: REFUND.includes(dow) })
+    const dow = t.getDay(), key = fk(t)
+    if (CAL.skip.has(key)) continue
+    const x = CAL.extra[key]
+    if (x) out.push({ date: new Date(t), key, dow, place: x.place, refund: x.refund })
+    else if (PLACES[dow]) out.push({ date: new Date(t), key, dow, place: PLACES[dow], refund: REFUND.includes(dow) })
   }
   return out
 }
@@ -105,7 +200,7 @@ function renderList() {
       <select data-car aria-label="Rimborso carburante"${dis}><option value="">Nessuno</option>${PEOPLE.map(p => `<option${r.driver === p ? ' selected' : ''}>${p}</option>`).join('')}</select></label>` : '<span></span>'
     return `<div class="row${l.key === today ? ' today' : ''}" data-k="${l.key}">
       <div class="d"><small>${DOW[l.dow]}</small><b>${l.date.getDate()}</b></div>
-      <div class="pl">${l.place}</div>
+      <div class="pl">${esc(l.place)}</div>
       <div class="dots">
         <button class="dot" data-f="attendance_a" aria-label="Alessandro" aria-pressed="${!!r.attendance_a}"${dis}><span>A</span></button>
         <button class="dot" data-f="attendance_g" aria-label="Gianmarco" aria-pressed="${!!r.attendance_g}"${dis}><span>G</span></button>
