@@ -9,11 +9,18 @@ import './style.css'
 
    Qui sotto scrivi solo le ECCEZIONI, mese per mese:
      • Una riga col nome del mese e l'anno:    Dicembre 2026
-     • Poi una riga per ogni data:
-         + 23 Ostia Antica      → lezione in più (giorno + luogo)
-         + 28 Frosinone
-         - 25                   → lezione tolta (es. festivo)
+     • Poi una riga per ogni lezione:
+         + 23 Ostia Antica      → lezione (giorno + luogo)
+         - 25                   → toglie TUTTE le lezioni di quel giorno
+         - 25 Frosinone         → toglie solo la lezione di Frosinone
        Il "+" si può anche omettere:  23 Ostia Antica
+     • DUE LEZIONI LO STESSO GIORNO: scrivi due righe con la stessa data
+       e luoghi diversi:
+         + 20 Ostia Antica
+         + 20 Frosinone
+       ATTENZIONE: per un giorno in cui scrivi dei "+", le tue righe
+       sostituiscono la lezione automatica di quel giorno, quindi
+       elenca TUTTE le lezioni di quel giorno (anche quella normale).
      • Il rimborso carburante è automatico: sì per Castel Gandolfo e
        Frosinone, no per Ostia Antica. Per un altro luogo aggiungi
        la parola "rimborso" a fine riga:  + 12 Roma rimborso
@@ -64,8 +71,32 @@ const addDays = (d, n) => new Date(d.getFullYear(), d.getMonth(), d.getDate() + 
 const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]))
 
 /* ---------- Lettura del calendario (eccezioni) ---------- */
+// lezioni "normali" di un giorno della settimana
+const regular = dow => PLACES[dow] ? [{ place: PLACES[dow], refund: REFUND.includes(dow) }] : []
+
+// "Frosinone rimborso" -> { place, refund }; testo vuoto -> luogo normale di quel giorno
+function resolvePlace(text, dow) {
+  const noRef = /\bsenza\s+rimborso\b/i.test(text)
+  const wantRef = /\brimborso\b/i.test(text) && !noRef
+  const rest = text.replace(/\b(senza\s+)?rimborso\b/ig, '').replace(/\|/g, ' ').replace(/\s+/g, ' ').trim()
+  let place = rest, refund = false
+  if (!rest) {
+    place = PLACES[dow]
+    if (!place) return null
+    refund = REFUND.includes(dow)
+  } else {
+    const low = rest.toLowerCase()
+    const k = Object.keys(KNOWN).find(w => low.includes(w))
+    if (k) { place = KNOWN[k][0]; refund = KNOWN[k][1] }
+  }
+  if (wantRef) refund = true
+  if (noRef) refund = false
+  return { place, refund }
+}
+
+// restituisce { days }: data 'YYYY-MM-DD' -> elenco lezioni di quel giorno (sostituisce quelle normali)
 function parseCalendar(text) {
-  const extra = {}, skip = new Set()
+  const days = {}
   let y = null, m = null
   for (const raw of String(text).split('\n')) {
     try {
@@ -81,48 +112,41 @@ function parseCalendar(text) {
       // riga data: "+ 23 Luogo" | "- 25" | "23 Luogo" | "+ 2026-12-23 Luogo"
       const r = line.match(/^([+-])?\s*(?:(\d{4})-(\d{1,2})-(\d{1,2})|(\d{1,2}))\b\s*(.*)$/)
       if (!r) { console.warn('Calendario: riga ignorata →', line); continue }
-      const remove = r[1] === '-'
       let yy, mm, dd
       if (r[2]) { yy = +r[2]; mm = +r[3] - 1; dd = +r[4] }
       else if (y !== null) { yy = y; mm = m; dd = +r[5] }
       else { console.warn('Calendario: manca il mese sopra →', line); continue }
       const dt = new Date(yy, mm, dd)
       if (dt.getFullYear() !== yy || dt.getMonth() !== mm || dt.getDate() !== dd) { console.warn('Calendario: data non valida →', line); continue }
-      const key = fk(dt)
-      if (remove) { skip.add(key); delete extra[key]; continue }
-      let rest = r[6].trim()
-      const wantRef = /\brimborso\b/i.test(rest) && !/\bsenza\s+rimborso\b/i.test(rest)
-      const noRef = /\bsenza\s+rimborso\b/i.test(rest)
-      rest = rest.replace(/\b(senza\s+)?rimborso\b/ig, '').replace(/\s+/g, ' ').trim()
-      let place = rest, refund = false
-      if (!rest) {
-        place = PLACES[dt.getDay()]
-        if (!place) { console.warn('Calendario: manca il luogo →', line); continue }
-        refund = REFUND.includes(dt.getDay())
-      } else {
-        const low = rest.toLowerCase()
-        const k = Object.keys(KNOWN).find(w => low.includes(w))
-        if (k) { place = KNOWN[k][0]; refund = KNOWN[k][1] }
+      const key = fk(dt), dow = dt.getDay(), rest = r[6].trim()
+      if (r[1] === '-') {
+        if (!rest) days[key] = []                       // toglie tutto il giorno
+        else {
+          const p = resolvePlace(rest, dow)
+          if (!p) { console.warn('Calendario: luogo non valido →', line); continue }
+          days[key] = (days[key] || regular(dow)).filter(x => x.place.toLowerCase() !== p.place.toLowerCase())
+        }
+        continue
       }
-      if (wantRef) refund = true
-      if (noRef) refund = false
-      skip.delete(key)
-      extra[key] = { place, refund }
+      const p = resolvePlace(rest, dow)
+      if (!p) { console.warn('Calendario: manca il luogo →', line); continue }
+      const cur = (days[key] ||= [])
+      const i = cur.findIndex(x => x.place.toLowerCase() === p.place.toLowerCase())
+      if (i >= 0) cur[i] = p; else cur.push(p)
     } catch (e) { console.warn('Calendario: riga ignorata →', raw, e) }
   }
-  return { extra, skip }
+  return { days }
 }
 let CAL
-try { CAL = parseCalendar(CALENDARIO) } catch (e) { console.warn('Calendario non leggibile', e); CAL = { extra: {}, skip: new Set() } }
+try { CAL = parseCalendar(CALENDARIO) } catch (e) { console.warn('Calendario non leggibile', e); CAL = { days: {} } }
 
+// Ogni lezione ha: day = 'YYYY-MM-DD', key = 'YYYY-MM-DD|Luogo' (identifica la lezione)
 function lessonsInRange(from, to) {
   const out = []
   for (let t = new Date(from); t <= to; t = addDays(t, 1)) {
-    const dow = t.getDay(), key = fk(t)
-    if (CAL.skip.has(key)) continue
-    const x = CAL.extra[key]
-    if (x) out.push({ date: new Date(t), key, dow, place: x.place, refund: x.refund })
-    else if (PLACES[dow]) out.push({ date: new Date(t), key, dow, place: PLACES[dow], refund: REFUND.includes(dow) })
+    const dow = t.getDay(), day = fk(t)
+    for (const x of (CAL.days[day] || regular(dow)))
+      out.push({ date: new Date(t), day, key: `${day}|${x.place}`, dow, place: x.place, refund: x.refund })
   }
   return out
 }
@@ -130,7 +154,7 @@ function lessonsInRange(from, to) {
 /* ---------- Stato ---------- */
 const sb = SB_URL && SB_KEY ? createClient(SB_URL, SB_KEY) : null
 let view = { ...START }
-let rows = {}               // data 'YYYY-MM-DD' -> { date, attendance_a, attendance_g, driver }
+let rows = {}               // 'YYYY-MM-DD|Luogo' -> { date, place, attendance_a, attendance_g, driver }
 let isAdmin = false
 let loading = false, loadErr = null, loadTok = 0
 let pending = 0, lastErr = '', flash = false, flashT
@@ -200,7 +224,7 @@ function renderList() {
     const r = rows[l.key] || {}
     const car = l.refund ? `<label class="car${r.driver ? ' on' : ''}"><span><span class="ic">🚗</span>${r.driver ? `<em>${r.driver}</em>` : ''}</span>
       <select data-car aria-label="Rimborso carburante"${dis}><option value="">Nessuno</option>${PEOPLE.map(p => `<option${r.driver === p ? ' selected' : ''}>${p}</option>`).join('')}</select></label>` : '<span></span>'
-    return `<div class="row${l.key === today ? ' today' : ''}" data-k="${l.key}">
+    return `<div class="row${l.day === today ? ' today' : ''}" data-k="${esc(l.key)}">
       <div class="d"><small>${DOW[l.dow]}</small><b>${l.date.getDate()}</b></div>
       <div class="pl">${esc(l.place)}</div>
       <div class="dots">
@@ -211,7 +235,7 @@ function renderList() {
 }
 
 function ensure(k) {
-  return (rows[k] ||= { date: k, attendance_a: false, attendance_g: false, driver: null })
+  return (rows[k] ||= { date: k.slice(0, 10), place: k.slice(11), attendance_a: false, attendance_g: false, driver: null })
 }
 
 $('#list').addEventListener('click', e => {
@@ -247,7 +271,7 @@ async function load(silent = false) {
   if (error) { if (!silent) { loadErr = error.message || 'errore di rete' } }
   else {
     loadErr = null
-    for (const r of data) if (!dirty.has(r.date)) rows[r.date] = r // non sovrascrive modifiche non ancora salvate
+    for (const r of data) { const k = `${r.date}|${r.place}`; if (!dirty.has(k)) rows[k] = r } // non sovrascrive modifiche non ancora salvate
   }
   renderList(); status()
 }
@@ -261,7 +285,7 @@ function persist(k) {
     let error
     try {
       ({ error } = await sb.from('lessons').upsert(
-        { date: k, attendance_a: r.attendance_a, attendance_g: r.attendance_g, driver: r.driver }, { onConflict: 'date' }))
+        { date: r.date, place: r.place, attendance_a: r.attendance_a, attendance_g: r.attendance_g, driver: r.driver }, { onConflict: 'date,place' }))
     } catch (e) { error = e }
     pending--
     if (error) { failed.add(k); lastErr = /row-level|policy|JWT/i.test(error.message || '') ? 'sessione scaduta, accedi di nuovo' : (error.message || 'errore di rete') }
@@ -351,7 +375,7 @@ $('#exp').onclick = async () => {
     const { data, error } = await sb.from('lessons').select('*').order('date')
     if (error) throw error
     const map = {}
-    data.forEach(r => map[r.date] = r)
+    data.forEach(r => map[`${r.date}|${r.place}`] = r)
     for (const k of dirty) map[k] = rows[k] // include modifiche locali non ancora confermate
     let to = new Date(view.y, view.m + 1, 0)
     if (data.length) {
