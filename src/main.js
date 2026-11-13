@@ -169,7 +169,12 @@ function lessonsInRange(from, to) {
 
 /* ---------- Stato ---------- */
 const sb = SB_URL && SB_KEY ? createClient(SB_URL, SB_KEY) : null
-let view = { ...START }
+let view = (() => {
+  const t = new Date(), y = t.getFullYear(), m = t.getMonth()
+  if (y < START.y || (y === START.y && m < START.m)) return { ...START } // prima di ottobre 2026: parte da ottobre
+  if (y > MAXY) return { y: MAXY, m: 11 }
+  return { y, m }
+})()
 let rows = {}               // 'YYYY-MM-DD|Luogo' -> { date, place, attendance_a, attendance_g, driver }
 let isAdmin = false
 let loading = false, loadErr = null, loadTok = 0
