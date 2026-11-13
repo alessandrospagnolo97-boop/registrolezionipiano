@@ -345,47 +345,27 @@ $('#lf').addEventListener('submit', async e => {
   f.reset(); closeModal('login')
 })
 
-/* ---------- Export (finestra con testo + copia) ---------- */
-let exportText = ''
+/* ---------- Export (file .txt del mese visualizzato) ---------- */
+let exportText = '', exportName = 'registro-lezioni.txt', exportFile = null
 function buildTxt(map, from, to) {
   const ls = lessonsInRange(from, to), L = []
-  const st = (r, f) => !(r && (r.attendance_a || r.attendance_g)) ? 'non compilato' : r[f] ? 'presente' : 'assente'
-  const cnt = { a: {}, g: {} }, ref = {}
-  for (const x of ['a', 'g']) for (const s of ['presente', 'assente', 'non compilato']) cnt[x][s] = 0
-  PEOPLE.forEach(p => ref[p] = 0)
-  let noref = 0, cm = ''
-  const now = new Date()
-  L.push('REGISTRO LEZIONI DI PIANOFORTE', `Periodo: ${dmy(from)} – ${dmy(to)}`, `Generato: ${dmy(now)} ${p2(now.getHours())}:${p2(now.getMinutes())}`, '',
-    'A = Alessandro   G = Gianmarco',
-    'presente      = segnato presente',
-    'assente       = lezione compilata (almeno un insegnante presente), ma questo insegnante no',
-    'non compilato = nessuna presenza segnata per la lezione (dato mancante, non è un\'assenza)', '')
+  const w = Math.max(15, ...ls.map(l => l.place.length))
+  let cm = ''
   for (const l of ls) {
-    const r = map[l.key], mk = `${l.date.getFullYear()}-${l.date.getMonth()}`
+    const mk = `${l.date.getFullYear()}-${l.date.getMonth()}`
     if (mk !== cm) {
       cm = mk
-      if (L[L.length - 1] !== '') L.push('')
+      if (L.length) L.push('')
       const t = `${MONTHS[l.date.getMonth()].toUpperCase()} ${l.date.getFullYear()}`
       L.push(t, '-'.repeat(t.length))
     }
-    const a = st(r, 'attendance_a'), g = st(r, 'attendance_g')
-    cnt.a[a]++; cnt.g[g]++
-    let line = `${DOW[l.dow]} ${p2(l.date.getDate())}/${p2(l.date.getMonth() + 1)}  ${l.place.padEnd(16)} A: ${a.padEnd(13)} G: ${g.padEnd(13)}`
-    if (l.refund) {
-      const d = r && r.driver
-      if (d) ref[d]++; else noref++
-      line += ` Rimborso: ${d || 'non indicato'}`
-    }
-    L.push(line.trimEnd())
+    const r = map[l.key] || {}
+    const who = r.attendance_a && r.attendance_g ? 'Alessandro e Gianmarco'
+      : r.attendance_a ? 'Alessandro' : r.attendance_g ? 'Gianmarco' : 'non compilato'
+    let line = `${DOW[l.dow]} ${p2(l.date.getDate())}/${p2(l.date.getMonth() + 1)}  ${l.place.padEnd(w)}  ${who}`
+    if (l.refund) line += ` - Rimborso: ${r.driver || 'non indicato'}`
+    L.push(line)
   }
-  const tot = ls.length, nc = cnt.a['non compilato']
-  L.push('', '', 'RIEPILOGO', '---------',
-    `Lezioni nel periodo: ${tot}  (compilate: ${tot - nc}, non compilate: ${nc})`, '', 'Presenze per insegnante:')
-  for (const [n, x] of [['Alessandro', 'a'], ['Gianmarco', 'g']])
-    L.push(`  ${n.padEnd(11)} presenze ${cnt[x].presente} · assenze ${cnt[x].assente} · non compilate ${cnt[x]['non compilato']}`)
-  L.push('', 'Rimborsi carburante (Castel Gandolfo e Frosinone):')
-  PEOPLE.forEach(p => L.push(`  ${p.padEnd(11)} ${ref[p]}`))
-  L.push(`  ${'Non indicato'.padEnd(11)} ${noref}`)
   return L.join('\n') + '\n'
 }
 
@@ -393,20 +373,18 @@ $('#exp').onclick = async () => {
   const btn = $('#exp')
   btn.disabled = true
   try {
-    const { data, error } = await sb.from('lessons').select('*').order('date')
+    const from = new Date(view.y, view.m, 1), to = new Date(view.y, view.m + 1, 0)
+    const { data, error } = await sb.from('lessons').select('*').gte('date', fk(from)).lte('date', fk(to))
     if (error) throw error
     const map = {}
     data.forEach(r => map[`${r.date}|${r.place}`] = r)
     for (const k of dirty) map[k] = rows[k] // include modifiche locali non ancora confermate
-    let to = new Date(view.y, view.m + 1, 0)
-    if (data.length) {
-      const [y, m] = data[data.length - 1].date.split('-').map(Number)
-      const e = new Date(y, m, 0)
-      if (e > to) to = e
-    }
-    exportText = buildTxt(map, new Date(START.y, START.m, 1), to)
+    exportText = buildTxt(map, from, to)
+    exportName = `registro-lezioni-${MONTHS[view.m].toLowerCase()}-${view.y}.txt`
+    exportFile = typeof File === 'function' ? new File([exportText], exportName, { type: 'text/plain' }) : null
     $('#xt').textContent = exportText
-    $('#xk').textContent = 'COPIA'
+    $('#xk').textContent = 'CONDIVIDI'
+    $('#xd').textContent = 'SCARICA'
     openModal('xm')
   } catch (e) {
     lastErr = 'export non riuscito (' + (e.message || 'errore di rete') + ')'
@@ -420,17 +398,29 @@ const closeModal = id => { $('#' + id).hidden = true }
 document.querySelectorAll('.modal').forEach(el => el.addEventListener('click', e => { if (e.target === el) closeModal(el.id) }))
 document.addEventListener('keydown', e => { if (e.key === 'Escape') document.querySelectorAll('.modal').forEach(el => closeModal(el.id)) })
 $('#xc').onclick = () => closeModal('xm')
+// SCARICA: salva il file .txt sul dispositivo
+const xd = document.createElement('button')
+xd.type = 'button'; xd.id = 'xd'; xd.className = 'btn ghost'; xd.textContent = 'SCARICA'
+$('#xk').before(xd)
+function downloadFile() {
+  const url = URL.createObjectURL(new Blob([exportText], { type: 'text/plain;charset=utf-8' }))
+  const a = document.createElement('a')
+  a.href = url; a.download = exportName
+  document.body.appendChild(a); a.click(); a.remove()
+  setTimeout(() => URL.revokeObjectURL(url), 10000)
+  $('#xd').textContent = 'SCARICATO ✓'
+}
+$('#xd').onclick = downloadFile
+// CONDIVIDI: apre il foglio di condivisione del telefono (WhatsApp, ecc.) con il file allegato;
+// se il dispositivo non lo supporta, scarica il file.
 $('#xk').onclick = async () => {
-  let ok = false
-  try { await navigator.clipboard.writeText(exportText); ok = true }
-  catch {
-    const ta = document.createElement('textarea')
-    ta.value = exportText; ta.style.cssText = 'position:fixed;top:0;opacity:0;font-size:16px'
-    document.body.appendChild(ta); ta.focus(); ta.select(); ta.setSelectionRange(0, exportText.length)
-    try { ok = document.execCommand('copy') } catch {}
-    ta.remove()
-  }
-  $('#xk').textContent = ok ? 'COPIATO ✓' : 'COPIA MANUALE'
+  try {
+    if (exportFile && navigator.canShare && navigator.canShare({ files: [exportFile] })) {
+      await navigator.share({ files: [exportFile] })
+      return
+    }
+  } catch (e) { if (e && e.name === 'AbortError') return }
+  downloadFile()
 }
 
 /* ---------- Avvio ---------- */
