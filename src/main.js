@@ -44,6 +44,22 @@ Novembre 2026
 + 26 Castel Gandolfo
 + 27 Ostia Antica
 + 27 Frosinone
+
+Dicembre 2026
++ 1 Ostia Antica
++ 3 Castel Gandolfo
++ 4 Frosinone
++ 8 Ostia Antica
++ 10 Castel Gandolfo
++ 11 Frosinone
+- 15 Ostia Antica
++ 17 Castel Gandolfo
+- 18 Frosinone
+- 22
+- 24
+- 25
+- 29
+- 31
 `
 /* ==================== fine zona da modificare ==================== */
 
